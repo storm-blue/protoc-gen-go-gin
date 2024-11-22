@@ -1,13 +1,14 @@
 type {{ $.InterfaceName }} interface {
-{{range .MethodSet}}
+{{range .MethodSet -}}
 	{{.Name}}(context.Context, *{{.Request}}) (*{{.Reply}}, error)
-{{end}}
+{{end -}}
 }
+
 func Register{{ $.InterfaceName }}(r gin.IRouter, srv {{ $.InterfaceName }}) {
 	s := {{.Name}}{
 		server: srv,
 		router:     r,
-		resp: default{{$.Name}}Resp{},
+		handler: _{{$.Name}}Responder{},
 	}
 	s.RegisterService()
 }
@@ -15,88 +16,69 @@ func Register{{ $.InterfaceName }}(r gin.IRouter, srv {{ $.InterfaceName }}) {
 type {{$.Name}} struct{
 	server {{ $.InterfaceName }}
 	router gin.IRouter
-	resp  interface {
+	handler  interface {
 		Error(ctx *gin.Context, err error)
-		ParamsError (ctx *gin.Context, err error)
+		InvalidParam(ctx *gin.Context, err error)
 		Success(ctx *gin.Context, data interface{})
 	}
 }
 
-// Resp 返回值
-type default{{$.Name}}Resp struct {}
+type _{{$.Name}}Responder struct {}
 
-func (resp default{{$.Name}}Resp) response(ctx *gin.Context, status, code int, msg string, data interface{}) {
-	ctx.JSON(status, map[string]interface{}{
-		"code": code, 
-		"msg": msg,
-		"data": data,
-	})
+func (handler _{{$.Name}}Responder) sendResponse(ctx *gin.Context, status int, message string, data interface{}) {
+	response := map[string]interface{}{}
+	if message != "" {
+		response["message"] = message
+	}
+	if data != nil {
+		response["data"] = data
+	}
+	ctx.JSON(status, response)
 }
 
-// Error 返回错误信息
-func (resp default{{$.Name}}Resp) Error(ctx *gin.Context, err error) {
-	code := -1
+func (handler _{{$.Name}}Responder) Error(ctx *gin.Context, err error) {
 	status := 500
-	msg := "未知错误"
+	message := "unknown error"
 	
-	if err == nil {
-		msg += ", err is nil"
-		resp.response(ctx, status, code, msg, nil)
-		return
-	}
-
-	type iCode interface{
-		HTTPCode() int
-		Message() string
-		Code() int
-	}
-
-	var c iCode
-	if errors.As(err, &c) {
-		status = c.HTTPCode()
-		code = c.Code()
-		msg = c.Message()
+	if err != nil {
+		message = err.Error()
 	}
 
 	_ = ctx.Error(err)
-
-	resp.response(ctx, status, code, msg, nil)
+	handler.sendResponse(ctx, status, message, nil)
 }
 
-// ParamsError 参数错误
-func (resp default{{$.Name}}Resp) ParamsError (ctx *gin.Context, err error) {
+func (handler _{{$.Name}}Responder) InvalidParam(ctx *gin.Context, err error) {
 	_ = ctx.Error(err)
-	resp.response(ctx, 400, 400, "参数错误", nil)
+	handler.sendResponse(ctx, 400, "invalid param", nil)
 }
 
-// Success 返回成功信息
-func (resp default{{$.Name}}Resp) Success(ctx *gin.Context, data interface{}) {
-	resp.response(ctx, 200, 0, "成功", data)
+func (handler _{{$.Name}}Responder) Success(ctx *gin.Context, data interface{}) {
+	handler.sendResponse(ctx, 200, "success", data)
 }
-
 
 {{range .Methods}}
 func (s *{{$.Name}}) {{ .HandlerName }} (ctx *gin.Context) {
 	var in {{.Request}}
 {{if .HasPathParams }}
 	if err := ctx.ShouldBindUri(&in); err != nil {
-		s.resp.ParamsError(ctx, err)
+		s.handler.InvalidParam(ctx, err)
 		return
 	}
 {{end}}
 {{if eq .Method "GET" "DELETE" }}
 	if err := ctx.ShouldBindQuery(&in); err != nil {
-		s.resp.ParamsError(ctx, err)
+		s.handler.InvalidParam(ctx, err)
 		return
 	}
 {{else if eq .Method "POST" "PUT" }}
 	if err := ctx.ShouldBindJSON(&in); err != nil {
-		s.resp.ParamsError(ctx, err)
+		s.handler.InvalidParam(ctx, err)
 		return
 	}
 {{else}}
 	if err := ctx.ShouldBind(&in); err != nil {
-		s.resp.ParamsError(ctx, err)
+		s.handler.InvalidParam(ctx, err)
 		return
 	}
 {{end}}
@@ -107,16 +89,16 @@ func (s *{{$.Name}}) {{ .HandlerName }} (ctx *gin.Context) {
 	newCtx := metadata.NewIncomingContext(ctx, md)
 	out, err := s.server.({{ $.InterfaceName }}).{{.Name}}(newCtx, &in)
 	if err != nil {
-		s.resp.Error(ctx, err)
+		s.handler.Error(ctx, err)
 		return
 	}
 
-	s.resp.Success(ctx, out)
+	s.handler.Success(ctx, out)
 }
 {{end}}
 
 func (s *{{$.Name}}) RegisterService() {
-{{range .Methods}}
-		s.router.Handle("{{.Method}}", "{{.Path}}", s.{{ .HandlerName }})
-{{end}}
+{{range .Methods -}}
+	s.router.Handle("{{.Method}}", "{{.Path}}", s.{{ .HandlerName }})
+{{end -}}
 }

@@ -35,7 +35,7 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) *protogen.Generated
 	g.P("// This is a compile-time assertion to ensure that this generated file")
 	g.P("// is compatible with the mohuishou/protoc-gen-go-gin package it is being compiled against.")
 	g.P("// ", contextPkg.Ident(""), metadataPkg.Ident(""))
-	g.P("//", ginPkg.Ident(""), errPkg.Ident(""))
+	g.P("//", ginPkg.Ident(""))
 	g.P()
 
 	for _, service := range file.Services {
