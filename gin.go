@@ -31,10 +31,14 @@ func getGoPackageName(gen *protogen.Plugin, goImportPath protogen.GoImportPath) 
 	panic(fmt.Errorf("no such package: %v", goImportPath))
 }
 
-func getFullTypeName(gen *protogen.Plugin, t *protogen.Message) string {
+func getFullTypeName(gen *protogen.Plugin, t *protogen.Message, thisFile *protogen.File) string {
 	goImportPath := t.GoIdent.GoImportPath
-	goPackageName := getGoPackageName(gen, goImportPath)
-	return fmt.Sprintf("%s.%s", goPackageName, t.GoIdent.GoName)
+	if thisFile.GoImportPath == goImportPath {
+		return t.GoIdent.GoName
+	} else {
+		goPackageName := getGoPackageName(gen, goImportPath)
+		return fmt.Sprintf("%s.%s", goPackageName, t.GoIdent.GoName)
+	}
 }
 
 // generateFile generates a _gin.pb.go file.
@@ -88,33 +92,33 @@ func genService(gen *protogen.Plugin, file *protogen.File, g *protogen.Generated
 	}
 
 	for _, m := range s.Methods {
-		sd.Methods = append(sd.Methods, genMethod(gen, m)...)
+		sd.Methods = append(sd.Methods, genMethod(gen, m, file)...)
 	}
 	g.P(sd.execute())
 }
 
-func genMethod(gen *protogen.Plugin, m *protogen.Method) []*method {
+func genMethod(gen *protogen.Plugin, m *protogen.Method, thisFile *protogen.File) []*method {
 	var methods []*method
 
 	// 存在 http rule 配置
 	rule, ok := proto.GetExtension(m.Desc.Options(), annotations.E_Http).(*annotations.HttpRule)
 	if rule != nil && ok {
 		for _, bind := range rule.AdditionalBindings {
-			methods = append(methods, buildHTTPRule(gen, m, bind))
+			methods = append(methods, buildHTTPRule(gen, m, bind, thisFile))
 		}
-		methods = append(methods, buildHTTPRule(gen, m, rule))
+		methods = append(methods, buildHTTPRule(gen, m, rule, thisFile))
 		return methods
 	}
 
 	// 不存在走默认流程
-	methods = append(methods, defaultMethod(gen, m))
+	methods = append(methods, defaultMethod(gen, m, thisFile))
 	return methods
 }
 
 // defaultMethodPath 根据函数名生成 http 路由
 // 例如: GetBlogArticles ==> get: /blog/articles
 // 如果方法名首个单词不是 http method 映射，那么默认返回 POST
-func defaultMethod(gen *protogen.Plugin, m *protogen.Method) *method {
+func defaultMethod(gen *protogen.Plugin, m *protogen.Method, thisFile *protogen.File) *method {
 	names := strings.Split(toSnakeCase(m.GoName), "_")
 	var (
 		paths      []string
@@ -146,12 +150,12 @@ func defaultMethod(gen *protogen.Plugin, m *protogen.Method) *method {
 		path = strings.Join(names[1:], "/")
 	}
 
-	md := buildMethodDesc(gen, m, httpMethod, path)
+	md := buildMethodDesc(gen, m, httpMethod, path, thisFile)
 	md.Body = "*"
 	return md
 }
 
-func buildHTTPRule(gen *protogen.Plugin, m *protogen.Method, rule *annotations.HttpRule) *method {
+func buildHTTPRule(gen *protogen.Plugin, m *protogen.Method, rule *annotations.HttpRule, thisFile *protogen.File) *method {
 	var (
 		path   string
 		method string
@@ -176,17 +180,17 @@ func buildHTTPRule(gen *protogen.Plugin, m *protogen.Method, rule *annotations.H
 		path = pattern.Custom.Path
 		method = pattern.Custom.Kind
 	}
-	md := buildMethodDesc(gen, m, method, path)
+	md := buildMethodDesc(gen, m, method, path, thisFile)
 	return md
 }
 
-func buildMethodDesc(gen *protogen.Plugin, m *protogen.Method, httpMethod, path string) *method {
+func buildMethodDesc(gen *protogen.Plugin, m *protogen.Method, httpMethod, path string, thisFile *protogen.File) *method {
 	defer func() { methodSets[m.GoName]++ }()
 	md := &method{
 		Name:    m.GoName,
 		Num:     methodSets[m.GoName],
 		Request: m.Input.GoIdent.GoName,
-		Reply:   getFullTypeName(gen, m.Output),
+		Reply:   getFullTypeName(gen, m.Output, thisFile),
 		Path:    path,
 		Method:  httpMethod,
 	}
