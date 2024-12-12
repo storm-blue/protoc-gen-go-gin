@@ -189,7 +189,7 @@ func buildMethodDesc(gen *protogen.Plugin, m *protogen.Method, httpMethod, path 
 	md := &method{
 		Name:    m.GoName,
 		Num:     methodSets[m.GoName],
-		Request: m.Input.GoIdent.GoName,
+		Request: getFullTypeName(gen, m.Input, thisFile),
 		Reply:   getFullTypeName(gen, m.Output, thisFile),
 		Path:    path,
 		Method:  httpMethod,
