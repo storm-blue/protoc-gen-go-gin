@@ -86,7 +86,7 @@ func (s *{{$.Name}}) {{ .HandlerName }} (ctx *gin.Context) {
 	for k, v := range ctx.Request.Header {
 		md.Set(k, v...)
 	}
-	newCtx := metadata.NewIncomingContext(ctx, md)
+	newCtx := metadata.NewIncomingContext(ctx.Request.Context(), md)
 	out, err := s.server.({{ $.InterfaceName }}).{{.Name}}(newCtx, &in)
 	if err != nil {
 		s.handler.Error(ctx, err)
