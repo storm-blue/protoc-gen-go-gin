@@ -66,12 +66,12 @@ func (s *{{$.Name}}) {{ .HandlerName }} (ctx *gin.Context) {
 		return
 	}
 {{end}}
-{{if eq .Method "GET" }}
+{{if eq .Method "GET" "DELETE" }}
 	if err := ctx.ShouldBindQuery(&in); err != nil {
 		s.handler.InvalidParam(ctx, err)
 		return
 	}
-{{else if eq .Method "POST" "PUT" "DELETE" }}
+{{else if eq .Method "POST" "PUT" }}
 	if err := ctx.ShouldBindJSON(&in); err != nil {
 		s.handler.InvalidParam(ctx, err)
 		return
