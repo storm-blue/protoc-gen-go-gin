@@ -58,6 +58,19 @@ func (handler _{{$.Name}}Responder) Success(ctx *gin.Context, data interface{}) 
 }
 
 {{range .Methods}}
+{{if .Deprecated}}
+// @Deprecated
+{{end}}
+// @Summary {{.GetSwaggerSummary}}
+// @Description {{.GetSwaggerDescription}}
+// @Tags {{.GetSwaggerTags}}
+// @Accept json
+// @Produce json
+{{.GetSwaggerParamComment}}
+// @Success 200 {object} {{.Reply}}
+// @Failure 400 {object} map[string]interface{} "Invalid parameter"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router {{.GetSwaggerPath}} [{{.GetSwaggerMethod}}]
 func (s *{{$.Name}}) {{ .HandlerName }} (ctx *gin.Context) {
 	var in {{.Request}}
 {{if .HasPathParams }}
@@ -99,6 +112,6 @@ func (s *{{$.Name}}) {{ .HandlerName }} (ctx *gin.Context) {
 
 func (s *{{$.Name}}) RegisterService() {
 {{range .Methods -}}
-	s.router.Handle("{{.Method}}", "{{.Path}}", s.{{ .HandlerName }})
+	s.router.Handle("{{.Method}}", "{{.GetSwaggerPath}}", s.{{ .HandlerName }})
 {{end -}}
 }

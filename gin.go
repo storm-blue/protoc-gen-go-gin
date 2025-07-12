@@ -41,6 +41,48 @@ func getFullTypeName(gen *protogen.Plugin, t *protogen.Message, thisFile *protog
 	}
 }
 
+// extractComments 从proto文件中提取注释信息
+func extractComments(loc *descriptorpb.SourceCodeInfo_Location) (summary, description, tags string) {
+	if loc == nil || loc.LeadingComments == nil || *loc.LeadingComments == "" {
+		return "", "", ""
+	}
+
+	comments := strings.TrimSpace(*loc.LeadingComments)
+	lines := strings.Split(comments, "\n")
+
+	// 清理每一行，移除注释符号和多余空格
+	var cleanLines []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		// 移除可能的注释符号
+		line = strings.TrimPrefix(line, "//")
+		line = strings.TrimSpace(line)
+		if line != "" {
+			cleanLines = append(cleanLines, line)
+		}
+	}
+
+	if len(cleanLines) == 0 {
+		return "", "", ""
+	}
+
+	// 提取第一行作为summary
+	summary = cleanLines[0]
+
+	// 提取所有行作为description
+	description = strings.Join(cleanLines, " ")
+
+	// 尝试从注释中提取tags (格式: @tag:value)
+	for _, line := range cleanLines {
+		if strings.HasPrefix(line, "@tag:") {
+			tags = strings.TrimPrefix(line, "@tag:")
+			break
+		}
+	}
+
+	return summary, description, tags
+}
+
 // generateFile generates a _gin.pb.go file.
 func generateFile(gen *protogen.Plugin, file *protogen.File) *protogen.GeneratedFile {
 	if len(file.Services) == 0 {
@@ -186,13 +228,42 @@ func buildHTTPRule(gen *protogen.Plugin, m *protogen.Method, rule *annotations.H
 
 func buildMethodDesc(gen *protogen.Plugin, m *protogen.Method, httpMethod, path string, thisFile *protogen.File) *method {
 	defer func() { methodSets[m.GoName]++ }()
+
+	// 提取注释信息
+	summary, description, tags := "", "", ""
+	deprecated := false
+
+	// 从proto文件的SourceCodeInfo中提取注释
+	if thisFile.Proto.SourceCodeInfo != nil {
+		for _, loc := range thisFile.Proto.SourceCodeInfo.Location {
+			// 检查是否是当前方法的注释
+			if len(loc.Path) >= 4 &&
+				loc.Path[0] == 6 && // service
+				loc.Path[2] == 2 && // method
+				int(loc.Path[1]) == int(m.Desc.Index()) &&
+				int(loc.Path[3]) == int(m.Desc.Index()) {
+				summary, description, tags = extractComments(loc)
+				break
+			}
+		}
+	}
+
+	// 检查方法是否被标记为deprecated
+	if m.Desc.Options() != nil {
+		deprecated = m.Desc.Options().(*descriptorpb.MethodOptions).GetDeprecated()
+	}
+
 	md := &method{
-		Name:    m.GoName,
-		Num:     methodSets[m.GoName],
-		Request: getFullTypeName(gen, m.Input, thisFile),
-		Reply:   getFullTypeName(gen, m.Output, thisFile),
-		Path:    path,
-		Method:  httpMethod,
+		Name:        m.GoName,
+		Num:         methodSets[m.GoName],
+		Request:     getFullTypeName(gen, m.Input, thisFile),
+		Reply:       getFullTypeName(gen, m.Output, thisFile),
+		Path:        path,
+		Method:      httpMethod,
+		Summary:     summary,
+		Description: description,
+		Tags:        tags,
+		Deprecated:  deprecated,
 	}
 	md.initPathParams()
 	return md

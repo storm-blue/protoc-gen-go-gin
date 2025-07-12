@@ -1,9 +1,37 @@
-gen_example:
-	go install
-	protoc -I ./example/api \
-	--openapiv2_out ./example/api --openapiv2_opt logtostderr=true \
-	--openapiv2_opt json_names_for_fields=false \
-	--go_out ./example/api --go_opt=paths=source_relative \
-	--go-gin_out ./example/api --go-gin_opt=paths=source_relative \
-	example/api/product/app/v1/v1.proto
-	protoc-go-inject-tag -input=./example/api/product/app/v1/v1.pb.go
+.PHONY: build install test clean example
+
+# 构建项目
+build:
+	go build -o protoc-gen-go-gin .
+
+# 安装到本地
+install:
+	go install .
+
+# 测试
+test:
+	go test -v ./...
+
+# 清理
+clean:
+	rm -f protoc-gen-go-gin
+	rm -f *.pb.go
+
+# 生成示例代码
+example:
+	protoc --go_out=. --go-gin_out=. example.proto
+
+# 运行示例
+run-example: example
+	go run main.go
+
+# 格式化代码
+fmt:
+	go fmt ./...
+
+# 检查代码
+vet:
+	go vet ./...
+
+# 构建并安装
+all: fmt vet build install

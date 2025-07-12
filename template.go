@@ -4,8 +4,8 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
-	"html/template"
 	"strings"
+	"text/template"
 )
 
 //go:embed template.go.tpl
@@ -54,6 +54,11 @@ type method struct {
 	Method       string // HTTP Method
 	Body         string
 	ResponseBody string
+	// Swagger documentation
+	Summary     string // API summary
+	Description string // API description
+	Tags        string // API tags
+	Deprecated  bool   // Whether the API is deprecated
 }
 
 // HandlerName for gin handler name
@@ -81,4 +86,58 @@ func (m *method) initPathParams() {
 		}
 	}
 	m.Path = strings.Join(paths, "/")
+}
+
+// GetSwaggerSummary 获取Swagger摘要，如果没有设置则使用默认值
+func (m *method) GetSwaggerSummary() string {
+	if m.Summary != "" {
+		return m.Summary
+	}
+	return m.Name
+}
+
+// GetSwaggerDescription 获取Swagger描述，如果没有设置则使用默认值
+func (m *method) GetSwaggerDescription() string {
+	if m.Description != "" {
+		return m.Description
+	}
+	return fmt.Sprintf("%s API endpoint", m.Name)
+}
+
+// GetSwaggerTags 获取Swagger标签
+func (m *method) GetSwaggerTags() string {
+	if m.Tags != "" {
+		return m.Tags
+	}
+	return "api"
+}
+
+// GetSwaggerMethod 获取小写的HTTP方法，用于Swagger注释
+func (m *method) GetSwaggerMethod() string {
+	return strings.ToLower(m.Method)
+}
+
+// GetSwaggerPath 获取带前导斜杠的路径，用于Swagger注释和路由注册
+func (m *method) GetSwaggerPath() string {
+	if strings.HasPrefix(m.Path, "/") {
+		return m.Path
+	}
+	return "/" + m.Path
+}
+
+// IsQueryMethod 判断是否为查询方法（GET、DELETE）
+func (m *method) IsQueryMethod() bool {
+	return m.Method == "GET" || m.Method == "DELETE"
+}
+
+// GetSwaggerParamComment 根据HTTP方法生成不同的参数注释
+func (m *method) GetSwaggerParamComment() string {
+	if m.IsQueryMethod() {
+		// 对于GET和DELETE请求，参数通过查询字符串传递
+		// 这里应该根据实际的请求结构体字段生成注释
+		// 暂时使用通用的注释，实际应该分析proto消息定义
+		return "// @Param request query " + m.Request + " true \"Query parameters\""
+	}
+	// 对于POST、PUT等请求，参数通过请求体传递
+	return "// @Param request body " + m.Request + " true \"Request body\""
 }
