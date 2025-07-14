@@ -41,7 +41,7 @@ func getFullTypeName(gen *protogen.Plugin, t *protogen.Message, thisFile *protog
 	}
 }
 
-// extractComments 从proto文件中提取注释信息
+// extractComments extracts summary, description, and tags from proto comments.
 func extractComments(loc *descriptorpb.SourceCodeInfo_Location) (summary, description, tags string) {
 	if loc == nil || loc.LeadingComments == nil || *loc.LeadingComments == "" {
 		return "", "", ""
@@ -50,15 +50,15 @@ func extractComments(loc *descriptorpb.SourceCodeInfo_Location) (summary, descri
 	comments := strings.TrimSpace(*loc.LeadingComments)
 	lines := strings.Split(comments, "\n")
 
-	// 清理每一行，移除注释符号和多余空格
+	// Clean each line, remove comment symbols and extra spaces
 	var cleanLines []string
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		// 移除可能的注释符号
+		// Remove possible comment symbols
 		line = strings.TrimPrefix(line, "//")
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "@auth") {
-			continue // 跳过 @auth 行
+			continue // Skip @auth line
 		}
 		cleanLines = append(cleanLines, line)
 	}
@@ -67,13 +67,13 @@ func extractComments(loc *descriptorpb.SourceCodeInfo_Location) (summary, descri
 		return "", "", ""
 	}
 
-	// 提取第一行作为summary
+	// Take the first line as summary
 	summary = cleanLines[0]
 
-	// 提取所有行作为description
+	// Join all lines as description
 	description = strings.Join(cleanLines, " ")
 
-	// 尝试从注释中提取tags (格式: @tag:value)
+	// Try to extract tags from comments (format: @tag:value)
 	for _, line := range cleanLines {
 		if strings.HasPrefix(line, "@tag:") {
 			tags = strings.TrimPrefix(line, "@tag:")
@@ -162,7 +162,7 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) *protogen.Generated
 	g.P("// This is a compile-time assertion to ensure that this generated file")
 	g.P("// is compatible with the protoc-gen-go-gin package it is being compiled against.")
 
-	// 判断是否需要 import unicode
+	// Determine whether to import unicode
 	needUnicode := false
 	for _, s := range file.Services {
 		for _, m := range s.Methods {
@@ -196,7 +196,7 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) *protogen.Generated
 	return g
 }
 
-// genService 传递 service 级别 @auth
+// genService passes service-level @auth
 func genService(gen *protogen.Plugin, file *protogen.File, g *protogen.GeneratedFile, s *protogen.Service) {
 	if s.Desc.Options().(*descriptorpb.ServiceOptions).GetDeprecated() {
 		g.P("//")
@@ -280,7 +280,7 @@ func getPathFromRuleInline(rule *annotations.HttpRule) string {
 	return ""
 }
 
-// buildMethodDesc extracts comments, handles @auth inheritance, and builds method struct
+// buildMethodDesc extracts comments, handles @auth inheritance, and builds method struct.
 func buildMethodDesc(gen *protogen.Plugin, m *protogen.Method, httpMethod, path string, thisFile *protogen.File, sd *service) *method {
 	// Use static methodSets map for method index
 	var methodSetsLocal = methodSets

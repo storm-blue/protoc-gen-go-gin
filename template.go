@@ -19,9 +19,9 @@ type service struct {
 	Methods   []*method
 	MethodSet map[string]*method
 
-	// Service 级别的默认认证配置
-	DefaultAuth        bool   // Service 是否有默认认证要求
-	DefaultAuthSchemes string // Service 级别的默认认证方案
+	// Default authentication config at service level
+	DefaultAuth        bool   // Whether authentication is required at service level
+	DefaultAuthSchemes string // Default authentication schemes at service level
 }
 
 func (s *service) execute() string {
@@ -50,11 +50,11 @@ func (s *service) InterfaceName() string {
 
 type method struct {
 	Name    string // SayHello
-	Num     int    // 一个 rpc 方法可以对应多个 http 请求
+	Num     int    // One RPC method may correspond to multiple HTTP requests
 	Request string // SayHelloReq
 	Reply   string // SayHelloResp
 	// http_rule
-	Path         string // 路由
+	Path         string // HTTP route
 	Method       string // HTTP Method
 	Body         string
 	ResponseBody string
@@ -65,7 +65,7 @@ type method struct {
 	Deprecated  bool   // Whether the API is deprecated
 	// Authentication
 	RequireAuth bool   // Whether this method requires authentication
-	AuthSchemes string // 认证方案（如BearerAuth、AccessKeyAuth SecretKeyAuth等）
+	AuthSchemes string // Authentication schemes (e.g. BearerAuth, AccessKeyAuth, SecretKeyAuth, etc.)
 }
 
 // HandlerName for gin handler name
@@ -73,7 +73,7 @@ func (m *method) HandlerName() string {
 	return fmt.Sprintf("%s_%d", m.Name, m.Num)
 }
 
-// HasPathParams 是否包含路由参数
+// HasPathParams checks if the route contains path parameters
 func (m *method) HasPathParams() bool {
 	paths := strings.Split(m.Path, "/")
 	for _, p := range paths {
@@ -84,7 +84,7 @@ func (m *method) HasPathParams() bool {
 	return false
 }
 
-// initPathParams 转换参数路由 {xx} --> :xx
+// initPathParams converts route parameters {xx} --> :xx
 func (m *method) initPathParams() {
 	paths := strings.Split(m.Path, "/")
 	for i, p := range paths {
@@ -95,7 +95,7 @@ func (m *method) initPathParams() {
 	m.Path = strings.Join(paths, "/")
 }
 
-// GetSwaggerSummary 获取Swagger摘要，如果没有设置则使用默认值
+// GetSwaggerSummary returns Swagger summary, or default if not set
 func (m *method) GetSwaggerSummary() string {
 	if m.Summary != "" {
 		return m.Summary
@@ -103,7 +103,7 @@ func (m *method) GetSwaggerSummary() string {
 	return m.Name
 }
 
-// GetSwaggerDescription 获取Swagger描述，如果没有设置则使用默认值
+// GetSwaggerDescription returns Swagger description, or default if not set
 func (m *method) GetSwaggerDescription() string {
 	if m.Description != "" {
 		return m.Description
@@ -111,7 +111,7 @@ func (m *method) GetSwaggerDescription() string {
 	return fmt.Sprintf("%s API endpoint", m.Name)
 }
 
-// GetSwaggerTags 获取Swagger标签
+// GetSwaggerTags returns Swagger tags
 func (m *method) GetSwaggerTags() string {
 	if m.Tags != "" {
 		return m.Tags
@@ -119,12 +119,12 @@ func (m *method) GetSwaggerTags() string {
 	return "api"
 }
 
-// GetSwaggerMethod 获取小写的HTTP方法，用于Swagger注释
+// GetSwaggerMethod returns lowercase HTTP method for Swagger annotation
 func (m *method) GetSwaggerMethod() string {
 	return strings.ToLower(m.Method)
 }
 
-// GetSwaggerPath 获取带前导斜杠的路径，用于Swagger注释和路由注册
+// GetSwaggerPath returns path with leading slash for Swagger annotation and route registration
 func (m *method) GetSwaggerPath() string {
 	if strings.HasPrefix(m.Path, "/") {
 		return m.Path
@@ -132,24 +132,24 @@ func (m *method) GetSwaggerPath() string {
 	return "/" + m.Path
 }
 
-// IsQueryMethod 判断是否为查询方法（GET、DELETE）
+// IsQueryMethod checks if the method is a query method (GET, DELETE)
 func (m *method) IsQueryMethod() bool {
 	return m.Method == "GET" || m.Method == "DELETE"
 }
 
-// GetSwaggerParamComment 根据HTTP方法生成不同的参数注释
+// GetSwaggerParamComment generates parameter comments based on HTTP method
 func (m *method) GetSwaggerParamComment() string {
 	if m.IsQueryMethod() {
-		// 对于GET和DELETE请求，参数通过查询字符串传递
-		// 这里应该根据实际的请求结构体字段生成注释
-		// 暂时使用通用的注释，实际应该分析proto消息定义
+		// For GET and DELETE requests, parameters are passed via query string
+		// Should generate comments based on actual request struct fields
+		// Temporarily use generic comments, should analyze proto message definition
 		return "// @Param request query " + m.Request + " true \"Query parameters\""
 	}
-	// 对于POST、PUT等请求，参数通过请求体传递
+	// For POST, PUT, etc. requests, parameters are passed via request body
 	return "// @Param request body " + m.Request + " true \"Request body\""
 }
 
-// GetAuthComment 生成 swagger @Security 注释
+// GetAuthComment generates swagger @Security annotation
 func (m *method) GetAuthComment() string {
 	if !m.RequireAuth || m.AuthSchemes == "" {
 		return ""
