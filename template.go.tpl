@@ -66,9 +66,12 @@ func (handler _{{$.Name}}Responder) Success(ctx *gin.Context, data interface{}) 
 // @Tags {{.GetSwaggerTags}}
 // @Accept json
 // @Produce json
-{{.GetSwaggerParamComment}}
+{{.GetSwaggerParamComment}}{{if ne .GetAuthComment ""}}
+{{.GetAuthComment}}{{end}}
 // @Success 200 {object} {{.Reply}}
 // @Failure 400 {object} map[string]interface{} "Invalid parameter"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Failure 500 {object} map[string]interface{} "Internal server error"
 // @Router {{.GetSwaggerPath}} [{{.GetSwaggerMethod}}]
 func (s *{{$.Name}}) {{ .HandlerName }} (ctx *gin.Context) {
@@ -80,6 +83,33 @@ func (s *{{$.Name}}) {{ .HandlerName }} (ctx *gin.Context) {
 	}
 {{end}}
 {{if eq .Method "GET" "DELETE" }}
+	// 兼容 query 参数驼峰和下划线风格
+	{
+		camelToSnake := func(s string) string {
+			var result []rune
+			for i, r := range s {
+				if unicode.IsUpper(r) {
+					if i > 0 {
+						result = append(result, '_')
+					}
+					result = append(result, unicode.ToLower(r))
+				} else {
+					result = append(result, r)
+				}
+			}
+			return string(result)
+		}
+		query := ctx.Request.URL.Query()
+		for k, v := range query {
+			snake := camelToSnake(k)
+			if snake != k {
+				if _, exists := query[snake]; !exists {
+					query[snake] = v
+				}
+			}
+		}
+		ctx.Request.URL.RawQuery = query.Encode()
+	}
 	if err := ctx.ShouldBindQuery(&in); err != nil {
 		s.handler.InvalidParam(ctx, err)
 		return

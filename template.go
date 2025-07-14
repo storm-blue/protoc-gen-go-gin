@@ -18,6 +18,10 @@ type service struct {
 
 	Methods   []*method
 	MethodSet map[string]*method
+
+	// Service 级别的默认认证配置
+	DefaultAuth        bool   // Service 是否有默认认证要求
+	DefaultAuthSchemes string // Service 级别的默认认证方案
 }
 
 func (s *service) execute() string {
@@ -59,6 +63,9 @@ type method struct {
 	Description string // API description
 	Tags        string // API tags
 	Deprecated  bool   // Whether the API is deprecated
+	// Authentication
+	RequireAuth bool   // Whether this method requires authentication
+	AuthSchemes string // 认证方案（如BearerAuth、AccessKeyAuth SecretKeyAuth等）
 }
 
 // HandlerName for gin handler name
@@ -140,4 +147,19 @@ func (m *method) GetSwaggerParamComment() string {
 	}
 	// 对于POST、PUT等请求，参数通过请求体传递
 	return "// @Param request body " + m.Request + " true \"Request body\""
+}
+
+// GetAuthComment 生成 swagger @Security 注释
+func (m *method) GetAuthComment() string {
+	if !m.RequireAuth || m.AuthSchemes == "" {
+		return ""
+	}
+	var lines []string
+	for _, scheme := range strings.Split(m.AuthSchemes, ",") {
+		scheme = strings.TrimSpace(scheme)
+		if scheme != "" {
+			lines = append(lines, "// @Security "+scheme)
+		}
+	}
+	return strings.Join(lines, "\n")
 }

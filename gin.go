@@ -57,9 +57,10 @@ func extractComments(loc *descriptorpb.SourceCodeInfo_Location) (summary, descri
 		// 移除可能的注释符号
 		line = strings.TrimPrefix(line, "//")
 		line = strings.TrimSpace(line)
-		if line != "" {
-			cleanLines = append(cleanLines, line)
+		if line == "" || strings.HasPrefix(line, "@auth") {
+			continue // 跳过 @auth 行
 		}
+		cleanLines = append(cleanLines, line)
 	}
 
 	if len(cleanLines) == 0 {
@@ -81,6 +82,61 @@ func extractComments(loc *descriptorpb.SourceCodeInfo_Location) (summary, descri
 	}
 
 	return summary, description, tags
+}
+
+// getHTTPMethod returns the HTTP method for a method, using rule if present, otherwise fallback to method name.
+func getHTTPMethod(rule *annotations.HttpRule, m *protogen.Method) string {
+	if rule != nil {
+		switch pattern := rule.Pattern.(type) {
+		case *annotations.HttpRule_Get:
+			return "GET"
+		case *annotations.HttpRule_Put:
+			return "PUT"
+		case *annotations.HttpRule_Post:
+			return "POST"
+		case *annotations.HttpRule_Delete:
+			return "DELETE"
+		case *annotations.HttpRule_Patch:
+			return "PATCH"
+		case *annotations.HttpRule_Custom:
+			return pattern.Custom.Kind
+		}
+	}
+	// fallback: method name
+	names := strings.Split(toSnakeCase(m.GoName), "_")
+	if len(names) == 0 {
+		return "POST"
+	}
+	switch strings.ToUpper(names[0]) {
+	case http.MethodGet, "FIND", "QUERY", "LIST", "SEARCH":
+		return http.MethodGet
+	case http.MethodPost, "CREATE":
+		return http.MethodPost
+	case http.MethodPut, "UPDATE":
+		return http.MethodPut
+	case http.MethodPatch:
+		return http.MethodPatch
+	case http.MethodDelete:
+		return http.MethodDelete
+	default:
+		return "POST"
+	}
+}
+
+// parseAuthSchemes extracts all @auth schemes from comment lines, panics if any @auth is empty.
+func parseAuthSchemes(lines []string, level string) []string {
+	var schemes []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "@auth") {
+			scheme := strings.TrimSpace(strings.TrimPrefix(line, "@auth"))
+			if scheme == "" {
+				panic(fmt.Sprintf("@auth must specify scheme at %s level", level))
+			}
+			schemes = append(schemes, scheme)
+		}
+	}
+	return schemes
 }
 
 // generateFile generates a _gin.pb.go file.
@@ -105,9 +161,28 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) *protogen.Generated
 	g.P()
 	g.P("// This is a compile-time assertion to ensure that this generated file")
 	g.P("// is compatible with the protoc-gen-go-gin package it is being compiled against.")
+
+	// 判断是否需要 import unicode
+	needUnicode := false
+	for _, s := range file.Services {
+		for _, m := range s.Methods {
+			method := getHTTPMethod(nil, m) // Pass nil for rule
+			if method == "GET" || method == "DELETE" {
+				needUnicode = true
+				break
+			}
+		}
+		if needUnicode {
+			break
+		}
+	}
+
 	g.P("import (")
 	g.P(contextPkg)
 	g.P(ginPkg)
+	if needUnicode {
+		g.P("\"unicode\"")
+	}
 	for pkg, _ := range needImport {
 		g.P(protogen.GoImportPath(pkg))
 	}
@@ -121,149 +196,138 @@ func generateFile(gen *protogen.Plugin, file *protogen.File) *protogen.Generated
 	return g
 }
 
+// genService 传递 service 级别 @auth
 func genService(gen *protogen.Plugin, file *protogen.File, g *protogen.GeneratedFile, s *protogen.Service) {
 	if s.Desc.Options().(*descriptorpb.ServiceOptions).GetDeprecated() {
 		g.P("//")
 		g.P(deprecationComment)
 	}
-	// HTTP Server.
 	sd := &service{
 		Name:     s.GoName,
 		FullName: string(s.Desc.FullName()),
 		FilePath: file.Desc.Path(),
 	}
-
+	// Extract service-level @auth
+	if file.Proto.SourceCodeInfo != nil {
+		for _, loc := range file.Proto.SourceCodeInfo.Location {
+			if len(loc.Path) == 2 && loc.Path[0] == 6 && int(loc.Path[1]) == int(s.Desc.Index()) {
+				if loc.LeadingComments != nil && *loc.LeadingComments != "" {
+					lines := strings.Split(*loc.LeadingComments, "\n")
+					schemes := parseAuthSchemes(lines, "service")
+					if len(schemes) > 0 {
+						sd.DefaultAuth = true
+						sd.DefaultAuthSchemes = strings.Join(schemes, ",")
+					}
+				}
+			}
+		}
+	}
 	for _, m := range s.Methods {
-		sd.Methods = append(sd.Methods, genMethod(gen, m, file)...)
+		mds := buildMethod(gen, m, file, sd)
+		sd.Methods = append(sd.Methods, mds...)
 	}
 	g.P(sd.execute())
 }
 
-func genMethod(gen *protogen.Plugin, m *protogen.Method, thisFile *protogen.File) []*method {
+// buildMethod handles both HTTP rule and default method, and applies service-level auth inheritance
+func buildMethod(gen *protogen.Plugin, m *protogen.Method, thisFile *protogen.File, sd *service) []*method {
 	var methods []*method
-
-	// 存在 http rule 配置
 	rule, ok := proto.GetExtension(m.Desc.Options(), annotations.E_Http).(*annotations.HttpRule)
 	if rule != nil && ok {
 		for _, bind := range rule.AdditionalBindings {
-			methods = append(methods, buildHTTPRule(gen, m, bind, thisFile))
+			methods = append(methods, buildMethodDesc(gen, m, getHTTPMethod(bind, m), getPathFromRuleInline(bind), thisFile, sd))
 		}
-		methods = append(methods, buildHTTPRule(gen, m, rule, thisFile))
+		methods = append(methods, buildMethodDesc(gen, m, getHTTPMethod(rule, m), getPathFromRuleInline(rule), thisFile, sd))
 		return methods
 	}
-
-	// 不存在走默认流程
-	methods = append(methods, defaultMethod(gen, m, thisFile))
-	return methods
-}
-
-// defaultMethodPath 根据函数名生成 http 路由
-// 例如: GetBlogArticles ==> get: /blog/articles
-// 如果方法名首个单词不是 http method 映射，那么默认返回 POST
-func defaultMethod(gen *protogen.Plugin, m *protogen.Method, thisFile *protogen.File) *method {
+	// fallback: default method
 	names := strings.Split(toSnakeCase(m.GoName), "_")
 	var (
 		paths      []string
 		httpMethod string
 		path       string
 	)
-
-	switch strings.ToUpper(names[0]) {
-	case http.MethodGet, "FIND", "QUERY", "LIST", "SEARCH":
-		httpMethod = http.MethodGet
-	case http.MethodPost, "CREATE":
-		httpMethod = http.MethodPost
-	case http.MethodPut, "UPDATE":
-		httpMethod = http.MethodPut
-	case http.MethodPatch:
-		httpMethod = http.MethodPatch
-	case http.MethodDelete:
-		httpMethod = http.MethodDelete
-	default:
-		httpMethod = "POST"
+	httpMethod = getHTTPMethod(nil, m)
+	if httpMethod == "POST" {
 		paths = names
 	}
-
 	if len(paths) > 0 {
 		path = strings.Join(paths, "/")
 	}
-
 	if len(names) > 1 {
 		path = strings.Join(names[1:], "/")
 	}
-
-	md := buildMethodDesc(gen, m, httpMethod, path, thisFile)
-	md.Body = "*"
-	return md
+	methods = append(methods, buildMethodDesc(gen, m, httpMethod, path, thisFile, sd))
+	return methods
 }
 
-func buildHTTPRule(gen *protogen.Plugin, m *protogen.Method, rule *annotations.HttpRule, thisFile *protogen.File) *method {
-	var (
-		path   string
-		method string
-	)
+// getPathFromRuleInline extracts path from HttpRule (inlined, not global)
+func getPathFromRuleInline(rule *annotations.HttpRule) string {
 	switch pattern := rule.Pattern.(type) {
 	case *annotations.HttpRule_Get:
-		path = pattern.Get
-		method = "GET"
+		return pattern.Get
 	case *annotations.HttpRule_Put:
-		path = pattern.Put
-		method = "PUT"
+		return pattern.Put
 	case *annotations.HttpRule_Post:
-		path = pattern.Post
-		method = "POST"
+		return pattern.Post
 	case *annotations.HttpRule_Delete:
-		path = pattern.Delete
-		method = "DELETE"
+		return pattern.Delete
 	case *annotations.HttpRule_Patch:
-		path = pattern.Patch
-		method = "PATCH"
+		return pattern.Patch
 	case *annotations.HttpRule_Custom:
-		path = pattern.Custom.Path
-		method = pattern.Custom.Kind
+		return pattern.Custom.Path
 	}
-	md := buildMethodDesc(gen, m, method, path, thisFile)
-	return md
+	return ""
 }
 
-func buildMethodDesc(gen *protogen.Plugin, m *protogen.Method, httpMethod, path string, thisFile *protogen.File) *method {
-	defer func() { methodSets[m.GoName]++ }()
-
-	// 提取注释信息
+// buildMethodDesc extracts comments, handles @auth inheritance, and builds method struct
+func buildMethodDesc(gen *protogen.Plugin, m *protogen.Method, httpMethod, path string, thisFile *protogen.File, sd *service) *method {
+	// Use static methodSets map for method index
+	var methodSetsLocal = methodSets
+	defer func() { methodSetsLocal[m.GoName]++ }()
+	// Extract comments (summary/desc/tags)
 	summary, description, tags := "", "", ""
 	deprecated := false
-
-	// 从proto文件的SourceCodeInfo中提取注释
+	requireAuth := false
+	authSchemes := ""
+	// Method-level @auth
 	if thisFile.Proto.SourceCodeInfo != nil {
 		for _, loc := range thisFile.Proto.SourceCodeInfo.Location {
-			// 检查是否是当前方法的注释
-			if len(loc.Path) >= 4 &&
-				loc.Path[0] == 6 && // service
-				loc.Path[2] == 2 && // method
-				int(loc.Path[1]) == int(m.Desc.Index()) &&
-				int(loc.Path[3]) == int(m.Desc.Index()) {
+			if len(loc.Path) >= 4 && loc.Path[0] == 6 && loc.Path[2] == 2 && int(loc.Path[3]) == int(m.Desc.Index()) {
 				summary, description, tags = extractComments(loc)
+				if loc.LeadingComments != nil && *loc.LeadingComments != "" {
+					lines := strings.Split(*loc.LeadingComments, "\n")
+					schemes := parseAuthSchemes(lines, "method")
+					if len(schemes) > 0 {
+						requireAuth = true
+						authSchemes = strings.Join(schemes, ",")
+					}
+				}
 				break
 			}
 		}
 	}
-
-	// 检查方法是否被标记为deprecated
+	// Inherit service-level @auth if method-level not set
+	if !requireAuth && sd.DefaultAuth {
+		requireAuth = true
+		authSchemes = sd.DefaultAuthSchemes
+	}
 	if m.Desc.Options() != nil {
 		deprecated = m.Desc.Options().(*descriptorpb.MethodOptions).GetDeprecated()
 	}
-
 	md := &method{
 		Name:        m.GoName,
-		Num:         methodSets[m.GoName],
-		Request:     getFullTypeName(gen, m.Input, thisFile),
-		Reply:       getFullTypeName(gen, m.Output, thisFile),
+		Num:         methodSetsLocal[m.GoName],
 		Path:        path,
 		Method:      httpMethod,
+		Request:     getFullTypeName(gen, m.Input, thisFile),
+		Reply:       getFullTypeName(gen, m.Output, thisFile),
 		Summary:     summary,
 		Description: description,
 		Tags:        tags,
 		Deprecated:  deprecated,
+		RequireAuth: requireAuth,
+		AuthSchemes: authSchemes,
 	}
 	md.initPathParams()
 	return md
